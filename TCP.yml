@@ -1,0 +1,108 @@
+---
+- hosts: all
+  become: yes
+  vars:
+    ssh_port: 4545
+  tasks:
+    - name: Update and upgrade the system
+      ansible.builtin.apt:
+        update_cache: yes
+        upgrade: dist
+      
+    - name: Install basic tools
+      ansible.builtin.apt:
+        name:
+          - curl
+          - wget
+          - nano
+          - htop
+          - net-tools
+          - unzip
+          - dnsutils
+        state: present
+
+    - name: Fix DNS resolution with Google and Cloudflare
+      ansible.builtin.copy:
+        content: |
+          nameserver 8.8.8.8
+          nameserver 1.1.1.1
+        dest: /etc/resolv.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Enable BBR + CAKE congestion control and other kernel settings
+      ansible.builtin.sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+      with_items:
+        - { name: 'net.core.default_qdisc', value: 'cake' }
+        - { name: 'net.ipv4.tcp_congestion_control', value: 'bbr' }
+        - { name: 'net.ipv4.ip_forward', value: '1' }
+        - { name: 'net.core.rmem_max', value: '67108864' }
+        - { name: 'net.core.wmem_max', value: '67108864' }
+        - { name: 'net.core.optmem_max', value: '25165824' }
+        - { name: 'net.core.somaxconn', value: '4096' }
+        - { name: 'net.core.netdev_max_backlog', value: '250000' }
+        - { name: 'net.ipv4.tcp_rmem', value: '4096 87380 67108864' }
+        - { name: 'net.ipv4.tcp_wmem', value: '4096 65536 67108864' }
+        - { name: 'net.ipv4.tcp_mtu_probing', value: '1' }
+        - { name: 'net.ipv4.tcp_tw_reuse', value: '1' }
+
+    - name: Create 2GB swap file
+      ansible.builtin.command: fallocate -l 2G /swapfile
+      args:
+        creates: /swapfile
+        
+    - name: Set permissions and activate swap
+      ansible.builtin.shell: |
+        chmod 600 /swapfile
+        mkswap /swapfile
+        swapon /swapfile
+        
+    - name: Ensure swap is active on reboot
+      ansible.builtin.mount:
+        path: none
+        src: /swapfile
+        fstype: swap
+        opts: sw
+        state: present
+        
+    - name: Configure SSH to use port {{ ssh_port }} and enable root login
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^{{ item.regexp }}'
+        line: '{{ item.line }}'
+        backup: yes
+      with_items:
+        - { regexp: 'Port', line: 'Port {{ ssh_port }}' }
+        - { regexp: 'PasswordAuthentication', line: 'PasswordAuthentication yes' }
+        - { regexp: 'PermitRootLogin', line: 'PermitRootLogin yes' }
+    
+    - name: Set a custom SSH banner
+      ansible.builtin.copy:
+        content: "Unauthorized access to this system is prohibited."
+        dest: /etc/ssh/ssh-banner
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Restart sshd service
+      ansible.builtin.systemd_service:
+        name: sshd
+        state: restarted
+        
+    - name: Create final status file
+      ansible.builtin.copy:
+        content: |
+          Setup finished!
+          SSH: port {{ ssh_port }}, password login enabled.
+          BBRv1 + CAKE optimization applied.
+          Swap 2GB active.
+          DNS fixed to 8.8.8.8 and 1.1.1.1.
+        dest: /root/setup_status.log
+        owner: root
+        group: root
+        mode: '0644'

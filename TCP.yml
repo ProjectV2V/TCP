@@ -90,9 +90,7 @@
         mode: '0644'
 
     - name: Restart sshd service
-      ansible.builtin.systemd_service:
-        name: sshd
-        state: restarted
+      ansible.builtin.shell: systemctl restart sshd
         
     - name: Create final status file
       ansible.builtin.copy:
